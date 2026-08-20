@@ -450,9 +450,7 @@ namespace jellyfin_ani_sync {
                         updated = true;
                         await UpdateAnimeStatus(detectedAnime, episodeNumber);
                     }
-                }
-
-                if (ApiName != ApiName.Annict) {
+                } else if (ApiName != ApiName.Annict) {
                     // also check if rewatch completed is checked
                     _logger.LogInformation($"({ApiName}) {(_animeType == typeof(Episode) ? "Series" : "Movie")} ({GetAnimeTitle(detectedAnime)}) not found in plan to watch list{(_userConfig.RewatchCompleted ? ", checking completed list.." : null)}");
                     updated = true;

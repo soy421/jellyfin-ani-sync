@@ -140,12 +140,39 @@ namespace jellyfin_ani_sync.Helpers {
         }
 
         private static (int? aniDbId, int? episodeOffset) GetAniDbByEpisodeOffset(ILogger logger, int? absoluteEpisodeNumber, int seasonNumber, int episodeNumber, List<AnimeListAnime> related) {
+            logger.LogInformation($"(AniDbMapping) Input episode={episodeNumber}, absoluteEpisode={absoluteEpisodeNumber}, season={seasonNumber}, related={string.Join(", ", related.Select(anime => $"{anime.Anidbid}:offset={anime.Episodeoffset ?? "<empty>"}"))}");
             if (absoluteEpisodeNumber != null) {
-                // FIXME: return correct offset when using absolute episode
-                // numbers.
-                var foundMapping = related.FirstOrDefault(animeListAnime => animeListAnime.MappingList?.Mapping?.FirstOrDefault(mapping => mapping.Start <= absoluteEpisodeNumber && mapping.End >= absoluteEpisodeNumber) != null);
+                var seasonRelated = related
+                    .Where(anime => anime.Defaulttvdbseason == seasonNumber.ToString() || anime.Defaulttvdbseason == "a")
+                    .ToList();
+                var candidates = seasonRelated.Any() ? seasonRelated : related;
+
+                var foundMapping = candidates
+                    .OrderBy(a => int.TryParse(a.Episodeoffset, out int n) ? n : 0)
+                    .FirstOrDefault(animeListAnime => {
+                        if (!int.TryParse(animeListAnime.Episodeoffset, out int currentOffset)) {
+                            currentOffset = 0;
+                        }
+
+                        var higherOffsets = candidates
+                            .Where(a => int.TryParse(a.Episodeoffset, out int offset) && offset > currentOffset)
+                            .Select(a => int.Parse(a.Episodeoffset))
+                            .OrderBy(o => o)
+                            .ToList();
+
+                        int? nextOffset = higherOffsets.Any() ? higherOffsets.First() : null;
+
+                           return absoluteEpisodeNumber > currentOffset &&
+                               (nextOffset == null || absoluteEpisodeNumber <= nextOffset);
+                    });
+
+                logger.LogInformation($"(AniDbMapping) Selected AniDB ID={foundMapping?.Anidbid ?? "<none>"}, offset={foundMapping?.Episodeoffset ?? "<empty>"}");
+
                 if (foundMapping != null) {
-                    return (int.TryParse(foundMapping.Anidbid, out var aniDbId) ? aniDbId : null, null);
+                    return (
+                        int.TryParse(foundMapping.Anidbid, out var aniDbId) ? aniDbId : null,
+                        int.TryParse(foundMapping.Episodeoffset, out var episodeOffset) ? episodeOffset : null
+                    );
                 } else {
                     logger.LogWarning("(AniDb) Could not lookup using absolute episode number (reason: no mappings found)");
                     return SeasonLookup(logger, seasonNumber, episodeNumber, related);
@@ -200,7 +227,9 @@ namespace jellyfin_ani_sync.Helpers {
         }
 
         private static int? GetAbsoluteEpisodeNumber(Episode episode) {
-            var previousSeasons = episode.Series.Children.OfType<Season>().Where(item => item.IndexNumber < episode.Season.IndexNumber).ToList();
+            var previousSeasons = episode.Series.Children.OfType<Season>()
+                .Where(item => item.IndexNumber > 0 && item.IndexNumber < episode.Season.IndexNumber)
+                .ToList();
             int previousSeasonIndexNumber = -1;
             foreach (int indexNumber in previousSeasons.Where(item => item.IndexNumber != null).Select(item => item.IndexNumber).OrderBy(item => item.Value)) {
                 if (previousSeasonIndexNumber == -1) {
